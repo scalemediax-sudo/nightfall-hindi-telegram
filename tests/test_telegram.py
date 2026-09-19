@@ -60,6 +60,12 @@ def test_unlisted_private_chat_cannot_create_a_job(service):
     service.handle(update(uid=404))
     assert store.all_jobs()==[]
 
+def test_wildcard_allows_any_private_chat_but_not_groups(service,monkeypatch):
+    monkeypatch.setenv('TELEGRAM_ALLOWED_USER_IDS','*')
+    service.handle(update(uid=404))
+    service.handle(update(uid=405,ident=2,kind='group'))
+    assert [job['owner'] for job in store.all_jobs()]==['tg_900_404']
+
 def test_cancel_and_status_are_chat_scoped(service):
     service.handle(update());service.handle(update('Second film',202,2))
     service.handle(update('/cancel',101,3))

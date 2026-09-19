@@ -52,7 +52,9 @@ def init():
 
 def allowed(user,chat):
     allowed_ids={value.strip() for value in os.getenv('TELEGRAM_ALLOWED_USER_IDS','').split(',') if value.strip()}
-    return str(chat)==str(user) and str(user) in allowed_ids
+    # A literal wildcard makes the public bot mode explicit. Groups and
+    # channels are still rejected by Service.handle before this check.
+    return str(chat)==str(user) and ('*' in allowed_ids or str(user) in allowed_ids)
 
 def is_casual_message(text):
     normalized=re.sub(r'[^\w\s]', ' ', text.casefold(), flags=re.UNICODE)
