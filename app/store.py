@@ -12,7 +12,7 @@ def init():
         else: c.execute('PRAGMA journal_mode=WAL')
         c.execute('CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, request TEXT, status TEXT, stage TEXT, progress INTEGER, error TEXT, created TEXT, cancel INTEGER DEFAULT 0)')
         columns=[r[0] for r in c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='jobs' AND table_schema=current_schema()")] if database.postgres() else [r[1] for r in c.execute('PRAGMA table_info(jobs)')]
-        for name,definition in [('owner',"TEXT NOT NULL DEFAULT 'admin'"),('heartbeat','DOUBLE PRECISION'),('worker','TEXT'),('regenerate_scene','INTEGER'),('enqueued','DOUBLE PRECISION')]:
+        for name,definition in [('owner',"TEXT NOT NULL DEFAULT 'admin'"),('heartbeat','DOUBLE PRECISION'),('worker','TEXT'),('regenerate_scene','INTEGER'),('enqueued','DOUBLE PRECISION'),('retry_at','DOUBLE PRECISION'),('retry_count','INTEGER NOT NULL DEFAULT 0')]:
             if name not in columns:c.execute('ALTER TABLE jobs ADD COLUMN '+name+' '+definition)
         c.execute('CREATE INDEX IF NOT EXISTS jobs_owner_created ON jobs(owner,created)')
         c.execute('CREATE INDEX IF NOT EXISTS jobs_queue ON jobs(status,enqueued)')
@@ -43,7 +43,7 @@ def folder(ident):
     return DATA/ident
 
 def update(ident, **values):
-    assert set(values)<= {'status','stage','progress','error','cancel','heartbeat','worker','regenerate_scene','enqueued'}
+    assert set(values)<= {'status','stage','progress','error','cancel','heartbeat','worker','regenerate_scene','enqueued','retry_at','retry_count'}
     with db() as c: c.execute('UPDATE jobs SET '+','.join(k+'=?' for k in values)+' WHERE id=?', (*values.values(),ident))
 
 def get(ident):

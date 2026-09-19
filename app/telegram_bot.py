@@ -77,11 +77,13 @@ def review(job_id):
     return dict(row) if row else None
 
 def status_text(job,detailed=False):
-    if job['status'] in ('queued','running'):
+    if job['status']=='queued' and job['stage'].startswith('Waiting to retry'):
+        text=f"{job['request']['title']}\n{job['progress']}% · {job['stage']}. I will retry automatically when the backoff ends."
+    elif job['status'] in ('queued','running'):
         text='Generating your script.' if job['stage'] in ('Waiting for worker','Checking production tools') or job['stage'].startswith('Writing ') else 'Your script is completed, scenes are generated. Now generating your video.'
     else:text=f"{job['request']['title']}\n{job['progress']}% · {job['stage']}"
     if detailed and job['status'] in ('queued','running'):text=job['request']['title']+'\n'+text
-    if job['status'] in ('failed','paused'):text+='\nProduction paused. '+(job.get('error') or '')[:1200]+'\nUse /resume to retry saved work. Check Replicate billing, quota, and the saved operation.'
+    if job['status'] in ('failed','paused'):text+='\nProduction paused. '+(job.get('error') or '')[:1200]+'\nCheck the provider billing or quota, then use /resume only if the issue has been resolved.'
     if job['status']=='cancelled':text+='\nStopped. Use /resume to continue.'
     if job['status']=='complete':text+='\nYour film is ready.'
     return text[:3900]

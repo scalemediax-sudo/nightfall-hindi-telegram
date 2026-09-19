@@ -9,13 +9,13 @@ def claim():
     connection=psycopg.connect(os.environ['DATABASE_URL'],autocommit=True,row_factory=dict_row)
     try:
         with connection.transaction():
-            rows=connection.execute("SELECT id,owner FROM jobs q WHERE status='queued' AND NOT EXISTS (SELECT 1 FROM jobs busy WHERE busy.owner=q.owner AND busy.status='running') ORDER BY enqueued NULLS FIRST,created LIMIT 50 FOR UPDATE SKIP LOCKED").fetchall()
+            rows=connection.execute("SELECT id,owner FROM jobs q WHERE status='queued' AND (retry_at IS NULL OR retry_at<=%s) AND NOT EXISTS (SELECT 1 FROM jobs busy WHERE busy.owner=q.owner AND busy.status='running') ORDER BY enqueued NULLS FIRST,created LIMIT 50 FOR UPDATE SKIP LOCKED",(time.time(),)).fetchall()
             for row in rows:
                 # One production per tenant at a time; parallel tenants use different keys.
                 locked=connection.execute('SELECT pg_try_advisory_lock(hashtextextended(%s,0)) AS locked',('tenant:'+row['owner'],)).fetchone()['locked']
                 if not locked:continue
                 token=uuid.uuid4().hex
-                connection.execute("UPDATE jobs SET status='running',stage='Worker assigned',worker=%s,heartbeat=%s WHERE id=%s",(token,time.time(),row['id']))
+                connection.execute("UPDATE jobs SET status='running',stage='Worker assigned',worker=%s,heartbeat=%s,retry_at=NULL WHERE id=%s",(token,time.time(),row['id']))
                 return row['id'],token,connection
         connection.close();return None
     except BaseException:connection.close();raise

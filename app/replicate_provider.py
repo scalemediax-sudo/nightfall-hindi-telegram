@@ -2,6 +2,7 @@
 import os
 import hashlib
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from .config import ROOT, STYLE
 from . import store
@@ -20,6 +21,11 @@ def _safe_error(exc):
     if token:detail=detail.replace(token,'[redacted]')
     return detail[:600]
 
+def _definitive_rejection(exc):
+    """An HTTP 4xx response confirms that Replicate did not create a prediction."""
+    status=getattr(exc,'status',None)
+    return isinstance(status,int) and 400<=status<500
+
 class Replicate:
     def __init__(self, token, checkpoint):
         if not token.strip():
@@ -35,6 +41,15 @@ class Replicate:
         signature=hashlib.sha256(str((model,records)).encode()).hexdigest()
         if saved and saved.get('signature')!=signature:
             raise RuntimeError('Saved prediction inputs differ. Inspect the existing operation before changing it.')
+        if saved and saved.get('retry_safe'):
+            # Preserve the definite rejection, then start a fresh request. The
+            # provider confirmed no prediction was created for the old attempt.
+            archive=path.parent/'history'/datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')
+            archive.mkdir(parents=True,exist_ok=True)
+            journal.replace(archive/journal.name)
+            from . import storage
+            storage.forget(path.parent.name,[journal.name])
+            saved=None
         if saved and not saved.get('id'):
             raise RuntimeError('Prediction submission outcome is uncertain. Inspect Replicate history and reconcile the saved operation before retrying.')
         if saved:
@@ -43,7 +58,13 @@ class Replicate:
             version=self.client.models.get(model).latest_version.id
             saved={'model':model,'inputs':records,'signature':signature,'status':'submitting','done':False}
             store.save(journal,saved)
-            prediction=self.client.predictions.create(version=version,input=inp)
+            try:
+                prediction=self.client.predictions.create(version=version,input=inp)
+            except Exception as exc:
+                if _definitive_rejection(exc):
+                    saved.update(status='rejected',done=True,retry_safe=True,error=_safe_error(exc))
+                    store.save(journal,saved)
+                raise
             saved['id']=prediction.id
             store.save(journal,saved)
         deadline=time.monotonic()+1800

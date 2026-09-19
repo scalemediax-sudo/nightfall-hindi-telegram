@@ -1,4 +1,4 @@
-import os, hashlib, zipfile
+import os, hashlib, time, zipfile
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 from . import store, media, database, storage
@@ -10,6 +10,18 @@ from . import elevenlabs_tts
 pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='render')
 active=set(); lock=Lock()
 class Cancelled(Exception): pass
+
+def schedule_safe_provider_retry(ident, folder, message):
+    """Retry only requests Replicate definitively rejected before creating a prediction."""
+    journals=list(folder.glob('*.operation.json'))
+    safe=any(store.read(path).get('retry_safe') for path in journals)
+    if not safe:return False
+    current=store.get(ident); attempts=int(current.get('retry_count') or 0)
+    maximum=int(os.getenv('REPLICATE_SAFE_RETRY_LIMIT','3'))
+    if attempts>=maximum:return False
+    delay=int(os.getenv('REPLICATE_SAFE_RETRY_DELAY_SECONDS','900'))*(2**attempts)
+    store.update(ident,status='queued',stage='Waiting to retry a rejected Replicate request',error=message[:2400],retry_count=attempts+1,retry_at=time.time()+delay,enqueued=time.time())
+    return True
 
 def enqueue(ident):
     if database.postgres():
@@ -136,7 +148,8 @@ def work(ident,lease=None):
         message=str(exc)
         for secret in (os.getenv('REPLICATE_API_TOKEN'),os.getenv('OPENAI_API_KEY'),os.getenv('ELEVENLABS_API_KEY')):
             if secret: message=message.replace(secret,'[redacted]')
-        store.update(ident,status='failed',stage='Needs attention',error=message[:2400])
+        if not schedule_safe_provider_retry(ident,folder,message):
+            store.update(ident,status='failed',stage='Needs attention',error=message[:2400])
     finally:
         try:
             if not lease or (not lease[1].is_set() and store.get(ident)['worker']==lease[0]):storage.sync(ident)
