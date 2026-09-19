@@ -14,6 +14,12 @@ def media_models():
     """The fixed production media stack, recorded in each job manifest."""
     return {'image':IMAGE_MODEL,'image_edit':IMAGE_EDIT_MODEL,'video':VIDEO_MODEL}
 
+def _safe_error(exc):
+    detail=str(exc)
+    token=os.getenv('REPLICATE_API_TOKEN','')
+    if token:detail=detail.replace(token,'[redacted]')
+    return detail[:600]
+
 class Replicate:
     def __init__(self, token, checkpoint):
         if not token.strip():
@@ -49,7 +55,9 @@ class Replicate:
             if time.monotonic()>deadline:raise RuntimeError('Prediction still running; resume the saved operation.')
             time.sleep(2)
             prediction=self.client.predictions.get(saved['id'])
-        if prediction.status!='succeeded':raise RuntimeError('Saved Replicate prediction failed or was canceled. Inspect it before regeneration.')
+        if prediction.status!='succeeded':
+            detail=str(getattr(prediction,'error',None) or 'No provider error was returned.')[:500]
+            raise RuntimeError(f'Replicate prediction {prediction.status}: {detail}')
         output=prediction.output
         if isinstance(output,list):output=output[0]
         if hasattr(output,'read'):return output.read()
@@ -81,7 +89,7 @@ class Replicate:
         try:
             data=self._predict(model,inp,path,records)
         except Exception as exc:
-            raise RuntimeError('Replicate Pruna image generation failed; check token, quota and model access.') from None
+            raise RuntimeError(f'Replicate image generation failed: {_safe_error(exc)}') from None
         finally:
             for h in handles:h.close()
         from io import BytesIO
@@ -99,6 +107,6 @@ class Replicate:
                 inp={'prompt':prompt,'image':handle,'aspect_ratio':aspect,'duration':8,'draft':False,'prompt_upsampling':False}
                 records={**inp,'image':{'file':image.name,'sha256':hashlib.sha256(image.read_bytes()).hexdigest()}}
                 data=self._predict(VIDEO_MODEL,inp,path,records)
-        except Exception:
-            raise RuntimeError('Replicate Pruna video generation failed; check token, quota and model access.') from None
+        except Exception as exc:
+            raise RuntimeError(f'Replicate video generation failed: {_safe_error(exc)}') from None
         temp=path.with_suffix('.partial.mp4');temp.write_bytes(data);temp.replace(path)
